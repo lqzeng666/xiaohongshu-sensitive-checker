@@ -1,9 +1,11 @@
 import json
 import os
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 from claude_service import analyze_text, get_word_library, reload_word_library
+from scraper import fetch_note
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET", "xhs-checker-secret-2024")
 WORDS_PATH = os.path.join(os.path.dirname(__file__), "words.json")
 
 
@@ -33,6 +35,44 @@ def analyze():
             return jsonify({"error": "请求超时，请重试"}), 504
         else:
             return jsonify({"error": f"分析失败：{error_msg}"}), 500
+
+
+@app.route("/fetch-url", methods=["POST"])
+def fetch_url():
+    """
+    接收小红书笔记链接，返回笔记内容（title + desc）。
+    需要用户提前通过 /set-cookie 接口保存 Cookie，或在请求体中直接传入。
+    """
+    data = request.get_json() or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "请提供小红书笔记链接"}), 400
+
+    # Cookie 优先级：请求体 > session 缓存
+    cookie_str = data.get("cookie") or session.get("xhs_cookie", "")
+
+    result = fetch_note(url, cookie_str)
+    if result.get("error"):
+        return jsonify({"error": result["error"]}), 400
+
+    return jsonify({
+        "title": result.get("title", ""),
+        "desc": result.get("desc", ""),
+        "text": result.get("text", ""),
+        "note_id": result.get("note_id", ""),
+    })
+
+
+@app.route("/set-cookie", methods=["POST"])
+def set_cookie():
+    """保存用户的小红书 Cookie 到 session（仅服务端缓存，不持久化）。"""
+    data = request.get_json() or {}
+    cookie_str = (data.get("cookie") or "").strip()
+    if not cookie_str:
+        session.pop("xhs_cookie", None)
+        return jsonify({"ok": True, "msg": "Cookie 已清除"})
+    session["xhs_cookie"] = cookie_str
+    return jsonify({"ok": True, "msg": "Cookie 已保存"})
 
 
 @app.route("/words", methods=["GET"])

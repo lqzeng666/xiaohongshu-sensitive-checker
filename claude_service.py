@@ -31,28 +31,48 @@ AI_SYSTEM_PROMPT = """你是一位专业的小红书内容合规顾问。
 以下敏感词已由词库精确匹配完成，无需重复识别：
 {already_found}
 
-你的任务：**仅识别词库未覆盖的隐晦风险表达**，包括：
-- 谐音规避词（如"減féi"、"z最好"等变形写法）
-- 语义过度承诺（如"完全没有任何副作用"、"彻底根除"等）
-- 隐晦引流词（如"私我"、"找我拿"、"滴我"等）
+你的任务：**仅识别词库未覆盖的风险表达**，并区分两类：
+
+## 违禁词（category: "banned"）
+可能导致笔记被删除或账号封禁，包括：
+- 医疗效果宣称（"治愈"、"根治"等）
+- 虚假绝对化承诺（"100%有效"等）
+- 违规引流（"私我"、"找我拿"、"加V"等）
+- 违禁商品相关词
+- 谐音/变形违规词（如"減féi"）
+
+## 限流词（category: "throttle"）
+可能导致流量降低或笔记被降权，包括：
+- 过度营销词（"爆款"、"网红"等）
+- 平台敏感话题
 - 竞品品牌名称
+- 诱导性互动词（"点赞"、"关注"、"转发"等变体）
+- 模糊夸大词（"神奇"、"奇迹"等）
 
 ## 输出格式（严格 JSON，不含任何其他文字）
 
 {{
-  "sensitive_words": [
+  "banned_words": [
     {{
-      "word": "敏感词原文（与输入文本完全一致的子串）",
-      "position": [起始字符索引, 结束字符索引],
-      "reason": "敏感原因（20字以内）",
+      "word": "原文中完全一致的子串",
+      "position": [起始索引, 结束索引],
+      "reason": "违禁原因（20字以内）",
+      "suggestions": ["替换方案1", "替换方案2"]
+    }}
+  ],
+  "throttle_words": [
+    {{
+      "word": "原文中完全一致的子串",
+      "position": [起始索引, 结束索引],
+      "reason": "限流原因（20字以内）",
       "suggestions": ["替换方案1", "替换方案2"]
     }}
   ],
   "risk_level": "high 或 medium 或 low",
-  "summary": "整体风险评估（80字以内）"
+  "summary": "整体风险评估（100字以内）"
 }}
 
-如无额外发现，sensitive_words 返回空数组。风险等级综合词库命中数量和AI发现结果共同判断。"""
+如无额外发现，对应数组返回空数组。风险等级综合所有命中数量判断。"""
 
 
 # ── 第一层：词库精确匹配 ──────────────────────────────────
@@ -63,8 +83,8 @@ def _is_ascii_word(s: str) -> bool:
 
 def _has_word_boundary(text: str, idx: int, word: str) -> bool:
     """
-    对纯 ASCII 字母/数字词，检查命中位置前后是否为词边界
-    （非 ASCII 字母数字字符，或字符串首尾），避免 'q' 匹配到 'sequential' 内部。
+    对纯 ASCII 字母/数字词，检查命中位置前后是否为词边界，
+    避免 'q' 匹配到 'sequential' 内部。
     中文词/混合词不做边界检查，直接返回 True。
     """
     if not _is_ascii_word(word):
@@ -77,12 +97,11 @@ def _has_word_boundary(text: str, idx: int, word: str) -> bool:
 
 def _dict_match(text: str) -> list[dict]:
     """
-    遍历词库，找出所有命中词及其位置。
-    使用贪婪策略：已被标记的字符区间不会被重复命中。
-    纯 ASCII 词（如 'q'、'QQ'、'SM'）额外检查词边界，避免误匹配长英文单词内部。
+    词库精确匹配，返回命中列表。
+    所有词库词默认归类为 banned（违禁词），AI 层会补充 throttle 类别。
     """
     hits = []
-    occupied = set()  # 已命中的字符索引集合，避免重叠
+    occupied = set()
 
     for word in SORTED_WORDS:
         search_from = 0
@@ -92,18 +111,18 @@ def _dict_match(text: str) -> list[dict]:
                 break
             if _has_word_boundary(text, idx, word):
                 span = set(range(idx, idx + len(word)))
-                if not span & occupied:  # 无重叠才记录
+                if not span & occupied:
                     occupied |= span
                     hits.append({
                         "word": word,
                         "position": [idx, idx + len(word)],
                         "reason": "词库收录敏感词",
                         "suggestions": WORD_LIBRARY[word],
+                        "category": "banned",
                         "source": "dict"
                     })
             search_from = idx + 1
 
-    # 按出现位置排序
     hits.sort(key=lambda x: x["position"][0])
     return hits
 
@@ -126,13 +145,9 @@ def _ai_analyze(text: str, dict_hits: list[dict]) -> dict:
 
 
 # ── 合并结果 ──────────────────────────────────────────────
-def _merge_results(text: str, dict_hits: list[dict], ai_result: dict) -> dict:
-    ai_words = ai_result.get("sensitive_words", [])
-
-    # 验证 AI 返回词的位置
-    validated_ai = []
-    dict_positions = {tuple(h["position"]) for h in dict_hits}
-
+def _validate_ai_words(text: str, ai_words: list[dict], dict_hits: list[dict], category: str) -> list[dict]:
+    """验证 AI 返回词的位置，去重，打上 category 和 source 标记。"""
+    validated = []
     for item in ai_words:
         word = item.get("word", "")
         if not word:
@@ -157,40 +172,64 @@ def _merge_results(text: str, dict_hits: list[dict], ai_result: dict) -> dict:
             for h in dict_hits
         )
         if not overlaps:
+            item["category"] = category
             item["source"] = "ai"
-            validated_ai.append(item)
+            validated.append(item)
+    return validated
 
-    all_words = dict_hits + validated_ai
+
+def _merge_results(text: str, dict_hits: list[dict], ai_result: dict) -> dict:
+    # AI 补充的违禁词
+    ai_banned = _validate_ai_words(
+        text, ai_result.get("banned_words", []), dict_hits, "banned"
+    )
+    # AI 补充的限流词（与已验证的所有词去重）
+    all_so_far = dict_hits + ai_banned
+    ai_throttle = _validate_ai_words(
+        text, ai_result.get("throttle_words", []), all_so_far, "throttle"
+    )
+
+    all_words = dict_hits + ai_banned + ai_throttle
     all_words.sort(key=lambda x: x["position"][0])
 
+    banned_list    = [w for w in all_words if w.get("category") == "banned"]
+    throttle_list  = [w for w in all_words if w.get("category") == "throttle"]
+
     # 综合风险等级
-    total = len(all_words)
     ai_risk = ai_result.get("risk_level", "low")
-    if total >= 5 or ai_risk == "high":
+    total_banned   = len(banned_list)
+    total_throttle = len(throttle_list)
+    if total_banned >= 3 or ai_risk == "high":
         risk = "high"
-    elif total >= 2 or ai_risk == "medium":
+    elif total_banned >= 1 or total_throttle >= 3 or ai_risk == "medium":
         risk = "medium"
     else:
         risk = "low"
 
-    dict_count = len(dict_hits)
-    ai_count = len(validated_ai)
-    summary_parts = []
-    if dict_count:
-        summary_parts.append(f"词库命中 {dict_count} 个敏感词")
-    if ai_count:
-        summary_parts.append(f"AI 额外发现 {ai_count} 个隐晦表达")
-    if not all_words:
-        summary_parts.append("文案基本合规，未发现明显敏感词")
+    # 摘要
+    parts = []
+    dict_banned_cnt  = len([w for w in dict_hits if w.get("category") == "banned"])
+    ai_banned_cnt    = len(ai_banned)
+    ai_throttle_cnt  = len(ai_throttle)
 
+    if dict_banned_cnt:
+        parts.append(f"词库命中 {dict_banned_cnt} 个违禁词")
+    if ai_banned_cnt:
+        parts.append(f"AI 额外发现 {ai_banned_cnt} 个违禁表达")
+    if ai_throttle_cnt:
+        parts.append(f"AI 发现 {ai_throttle_cnt} 个限流词")
+    if not all_words:
+        parts.append("文案基本合规，未发现明显问题")
     ai_summary = ai_result.get("summary", "")
     if ai_summary and all_words:
-        summary_parts.append(ai_summary)
+        parts.append(ai_summary)
 
     return {
-        "sensitive_words": all_words,
+        "banned_words": banned_list,
+        "throttle_words": throttle_list,
+        "sensitive_words": all_words,      # 兼容旧格式，保留合并列表
         "risk_level": risk,
-        "summary": "；".join(summary_parts) if summary_parts else "检测完成。"
+        "summary": "；".join(parts) if parts else "检测完成。"
     }
 
 
@@ -198,18 +237,15 @@ def _merge_results(text: str, dict_hits: list[dict], ai_result: dict) -> dict:
 def analyze_text(text: str) -> dict:
     if not text or not text.strip():
         return {
+            "banned_words": [],
+            "throttle_words": [],
             "sensitive_words": [],
             "risk_level": "low",
             "summary": "文本为空，无需检测。"
         }
 
-    # 第一层：词库精确匹配（快速、确定）
-    dict_hits = _dict_match(text)
-
-    # 第二层：AI 语义分析（识别词库未覆盖的隐晦表达）
-    ai_result = _ai_analyze(text, dict_hits)
-
-    # 合并两层结果
+    dict_hits  = _dict_match(text)
+    ai_result  = _ai_analyze(text, dict_hits)
     return _merge_results(text, dict_hits, ai_result)
 
 
@@ -231,6 +267,8 @@ def _parse_json_response(response_text: str) -> dict:
                 pass
 
     return {
+        "banned_words": [],
+        "throttle_words": [],
         "sensitive_words": [],
         "risk_level": "low",
         "summary": "AI 分析结果解析失败，词库命中结果仍有效。",

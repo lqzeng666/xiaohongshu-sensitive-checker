@@ -6,48 +6,58 @@
   <title>小红书敏感词检测工具</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    .highlight-word {
+    /* 违禁词 — 红色 */
+    .highlight-banned {
       background-color: #fee2e2;
       border-bottom: 2px solid #ef4444;
       border-radius: 2px;
       cursor: pointer;
       transition: background-color 0.15s;
-      position: relative;
     }
-    .highlight-word:hover {
-      background-color: #fecaca;
+    .highlight-banned:hover { background-color: #fecaca; }
+    .highlight-banned.active  { background-color: #fca5a5; }
+
+    /* 限流词 — 橙色 */
+    .highlight-throttle {
+      background-color: #fff7ed;
+      border-bottom: 2px solid #f97316;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: background-color 0.15s;
     }
-    .highlight-word.active {
-      background-color: #fca5a5;
-    }
+    .highlight-throttle:hover { background-color: #fed7aa; }
+    .highlight-throttle.active { background-color: #fdba74; }
+
     #preview-content {
       white-space: pre-wrap;
       word-break: break-all;
       line-height: 1.8;
       font-size: 15px;
     }
-    .risk-high { color: #dc2626; }
-    .risk-medium { color: #d97706; }
-    .risk-low { color: #16a34a; }
-    .risk-badge-high { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
+    .risk-badge-high   { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
     .risk-badge-medium { background: #fef3c7; color: #d97706; border: 1px solid #fcd34d; }
-    .risk-badge-low { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
-    .word-card.active-card {
-      border-color: #f87171;
-      background: #fff5f5;
-    }
+    .risk-badge-low    { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
+
+    .word-card.active-card-banned   { border-color: #f87171; background: #fff5f5; }
+    .word-card.active-card-throttle { border-color: #fb923c; background: #fff7ed; }
+
     .loading-dots::after {
       content: '';
       animation: dots 1.2s steps(4, end) infinite;
     }
     @keyframes dots {
-      0%, 20% { content: ''; }
-      40% { content: '.'; }
-      60% { content: '..'; }
-      80%, 100% { content: '...'; }
+      0%,20%  { content: ''; }
+      40%     { content: '.'; }
+      60%     { content: '..'; }
+      80%,100%{ content: '...'; }
     }
-    #text-input {
-      resize: vertical;
+    #text-input { resize: vertical; }
+
+    /* Tab */
+    .tab-btn.active {
+      border-bottom: 2px solid #ef4444;
+      color: #ef4444;
+      font-weight: 600;
     }
   </style>
 </head>
@@ -58,7 +68,7 @@
     <div class="max-w-7xl mx-auto px-4 py-4 flex items-center gap-3">
       <div class="w-8 h-8 bg-red-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">书</div>
       <h1 class="text-xl font-semibold text-gray-800">小红书敏感词检测工具</h1>
-      <span class="text-xs text-gray-400 ml-2">by Claude AI</span>
+      <span class="text-xs text-gray-400 ml-2">违禁词 + 限流词双层检测</span>
     </div>
   </header>
 
@@ -68,40 +78,84 @@
       <!-- 左栏：输入 + 预览 -->
       <div class="flex flex-col gap-4">
 
-        <!-- 输入区 -->
-        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="font-semibold text-gray-700">原始文案</h2>
-            <span id="char-count" class="text-xs text-gray-400">0 / 5000</span>
+        <!-- 输入区（带 Tab） -->
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <!-- Tab 切换 -->
+          <div class="flex border-b border-gray-100 px-5 pt-4 gap-6">
+            <button id="tab-text" class="tab-btn active pb-2 text-sm text-gray-700 transition-colors" onclick="switchTab('text')">✍️ 文案输入</button>
+            <button id="tab-url"  class="tab-btn pb-2 text-sm text-gray-500 hover:text-gray-700 transition-colors" onclick="switchTab('url')">🔗 链接解析</button>
           </div>
-          <textarea
-            id="text-input"
-            class="w-full h-52 p-3 text-sm text-gray-700 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 placeholder-gray-300"
-            placeholder="粘贴你的小红书文案草稿，点击「开始检测」识别敏感词…"
-            maxlength="5000"
-          ></textarea>
-          <div class="flex items-center gap-3 mt-3">
-            <button
-              id="analyze-btn"
-              class="flex-1 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-medium py-2.5 px-6 rounded-lg transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-              onclick="analyzeText()"
-            >
-              开始检测
-            </button>
-            <button
-              class="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
-              onclick="clearAll()"
-            >
-              清空
-            </button>
+
+          <!-- 文案输入面板 -->
+          <div id="panel-text" class="p-5">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-gray-400">粘贴小红书文案草稿</span>
+              <span id="char-count" class="text-xs text-gray-400">0 / 5000</span>
+            </div>
+            <textarea
+              id="text-input"
+              class="w-full h-52 p-3 text-sm text-gray-700 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 placeholder-gray-300"
+              placeholder="粘贴你的小红书文案草稿，点击「开始检测」识别敏感词…"
+              maxlength="5000"
+            ></textarea>
+            <div class="flex items-center gap-3 mt-3">
+              <button id="analyze-btn"
+                class="flex-1 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-medium py-2.5 px-6 rounded-lg transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                onclick="analyzeText()">
+                开始检测
+              </button>
+              <button class="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors" onclick="clearAll()">清空</button>
+            </div>
+          </div>
+
+          <!-- 链接解析面板 -->
+          <div id="panel-url" class="p-5" style="display:none">
+            <div class="mb-3">
+              <label class="block text-xs text-gray-500 mb-1">小红书笔记链接</label>
+              <input id="url-input" type="text"
+                class="w-full p-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 placeholder-gray-300"
+                placeholder="https://www.xiaohongshu.com/explore/..." />
+            </div>
+
+            <!-- Cookie 折叠区 -->
+            <div class="mb-4">
+              <button class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-2" onclick="toggleCookiePanel()">
+                <span id="cookie-toggle-icon">▶</span> Cookie 设置（登录后才能读取私密内容）
+              </button>
+              <div id="cookie-panel" style="display:none" class="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                <p class="text-xs text-gray-400 mb-2">如何获取 Cookie：打开小红书网页版并登录 → 按 F12 → Network → 任意请求 → Request Headers → 复制 <code class="bg-gray-100 px-1 rounded">Cookie</code> 字段值</p>
+                <textarea id="cookie-input"
+                  class="w-full h-20 p-2 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-red-300 font-mono placeholder-gray-300"
+                  placeholder="粘贴完整 Cookie 字符串…"></textarea>
+                <div class="flex gap-2 mt-2">
+                  <button class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded transition-colors" onclick="saveCookie()">保存 Cookie</button>
+                  <button class="text-xs text-gray-400 hover:text-gray-600 px-3 py-1.5 rounded border border-gray-200 transition-colors" onclick="clearCookie()">清除</button>
+                  <span id="cookie-status" class="text-xs text-gray-400 flex items-center ml-1"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <button id="fetch-btn"
+                class="flex-1 bg-red-500 hover:bg-red-600 text-white font-medium py-2.5 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onclick="fetchUrl()">
+                获取内容并检测
+              </button>
+              <button class="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors" onclick="clearAll()">清空</button>
+            </div>
+            <p id="fetch-note-info" class="text-xs text-gray-400 mt-2" style="display:none"></p>
           </div>
         </div>
 
         <!-- 高亮预览区 -->
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5" id="preview-section" style="display:none">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="font-semibold text-gray-700">原文标注</h2>
-            <div id="risk-badge" class="text-xs font-medium px-2.5 py-1 rounded-full"></div>
+            <h2 class="font-semibold text-gray-700 text-sm">原文标注</h2>
+            <div class="flex items-center gap-3">
+              <span class="flex items-center gap-1 text-xs text-red-500"><span class="w-3 h-1 bg-red-400 inline-block rounded"></span>违禁词</span>
+              <span class="flex items-center gap-1 text-xs text-orange-500"><span class="w-3 h-1 bg-orange-400 inline-block rounded"></span>限流词</span>
+              <div id="risk-badge" class="text-xs font-medium px-2.5 py-1 rounded-full"></div>
+            </div>
           </div>
           <div id="preview-content" class="text-gray-700 bg-gray-50 rounded-lg p-3 min-h-[80px]"></div>
         </div>
@@ -109,12 +163,10 @@
         <!-- 修改后预览 -->
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5" id="modified-section" style="display:none">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="font-semibold text-gray-700">修改后文案</h2>
-            <button
-              id="copy-btn"
+            <h2 class="font-semibold text-gray-700 text-sm">修改后文案</h2>
+            <button id="copy-btn"
               class="text-xs text-red-500 hover:text-red-600 border border-red-200 rounded px-3 py-1 transition-colors"
-              onclick="copyModified()"
-            >复制</button>
+              onclick="copyModified()">复制</button>
           </div>
           <div id="modified-content" class="text-gray-700 bg-green-50 rounded-lg p-3 min-h-[80px] whitespace-pre-wrap text-sm leading-relaxed"></div>
         </div>
@@ -132,15 +184,15 @@
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
             <p class="text-gray-500 text-sm loading-dots">AI 正在分析</p>
-            <p class="text-gray-400 text-xs">Claude 正在深度理解文案语境，通常需要 10-30 秒</p>
+            <p class="text-gray-400 text-xs">DeepSeek 正在深度理解文案语境，通常需要 10-30 秒</p>
           </div>
         </div>
 
         <!-- 空状态 -->
         <div id="empty-panel" class="bg-white rounded-xl border border-dashed border-gray-200 p-8 text-center">
           <div class="text-4xl mb-3">🔍</div>
-          <p class="text-gray-400 text-sm">粘贴文案后点击「开始检测」</p>
-          <p class="text-gray-300 text-xs mt-1">支持检测广告词、医疗宣称、引流词等敏感内容</p>
+          <p class="text-gray-400 text-sm">输入文案或粘贴链接后点击「开始检测」</p>
+          <p class="text-gray-300 text-xs mt-1">支持识别违禁词（封号风险）和限流词（降权风险）</p>
         </div>
 
         <!-- 结果面板 -->
@@ -151,9 +203,10 @@
             <div class="flex items-start gap-3">
               <div id="result-icon" class="text-2xl mt-0.5"></div>
               <div class="flex-1">
-                <div class="flex items-center gap-2 mb-1">
+                <div class="flex items-center gap-2 mb-2 flex-wrap">
                   <span class="font-semibold text-gray-700">检测结果</span>
-                  <span id="word-count-badge" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full"></span>
+                  <span id="banned-count-badge" class="text-xs bg-red-50 text-red-500 border border-red-100 px-2 py-0.5 rounded-full"></span>
+                  <span id="throttle-count-badge" class="text-xs bg-orange-50 text-orange-500 border border-orange-100 px-2 py-0.5 rounded-full"></span>
                 </div>
                 <p id="summary-text" class="text-sm text-gray-600 leading-relaxed"></p>
               </div>
@@ -164,20 +217,35 @@
           <div id="action-buttons" class="flex gap-2" style="display:none">
             <button
               class="flex-1 bg-orange-50 hover:bg-orange-100 text-orange-600 border border-orange-200 font-medium py-2 px-4 rounded-lg text-sm transition-colors"
-              onclick="applyAllSuggestions()"
-            >
+              onclick="applyAllSuggestions()">
               ✨ 一键替换全部
             </button>
             <button
               class="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 font-medium py-2 px-4 rounded-lg text-sm transition-colors"
-              onclick="resetText()"
-            >
+              onclick="resetText()">
               ↩ 还原原文
             </button>
           </div>
 
-          <!-- 敏感词列表 -->
-          <div id="word-list" class="flex flex-col gap-3"></div>
+          <!-- 违禁词区块 -->
+          <div id="banned-section">
+            <div class="flex items-center gap-2 mb-2 px-1">
+              <span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>
+              <span class="text-sm font-semibold text-red-600">违禁词</span>
+              <span class="text-xs text-gray-400">— 可能导致笔记被删除或账号被封禁</span>
+            </div>
+            <div id="banned-word-list" class="flex flex-col gap-3"></div>
+          </div>
+
+          <!-- 限流词区块 -->
+          <div id="throttle-section">
+            <div class="flex items-center gap-2 mb-2 px-1 mt-2">
+              <span class="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>
+              <span class="text-sm font-semibold text-orange-500">限流词</span>
+              <span class="text-xs text-gray-400">— 可能导致流量降低或笔记被降权</span>
+            </div>
+            <div id="throttle-word-list" class="flex flex-col gap-3"></div>
+          </div>
 
         </div>
 
@@ -199,257 +267,341 @@
   <script>
     let originalText = '';
     let currentText = '';
-    let sensitiveWords = [];
+    let bannedWords = [];
+    let throttleWords = [];
+    let allWords = [];
     let appliedReplacements = {}; // word -> chosen suggestion
 
-    // 字符计数
+    // ── Tab 切换 ──────────────────────────────────────────
+    function switchTab(tab) {
+      document.getElementById('panel-text').style.display = tab === 'text' ? '' : 'none';
+      document.getElementById('panel-url').style.display  = tab === 'url'  ? '' : 'none';
+      document.getElementById('tab-text').classList.toggle('active', tab === 'text');
+      document.getElementById('tab-url').classList.toggle('active', tab === 'url');
+    }
+
+    function toggleCookiePanel() {
+      const panel = document.getElementById('cookie-panel');
+      const icon  = document.getElementById('cookie-toggle-icon');
+      const open = panel.style.display === 'none';
+      panel.style.display = open ? '' : 'none';
+      icon.textContent = open ? '▼' : '▶';
+    }
+
+    // ── Cookie 管理 ────────────────────────────────────────
+    async function saveCookie() {
+      const cookie = document.getElementById('cookie-input').value.trim();
+      try {
+        const resp = await fetch('/set-cookie', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cookie }),
+        });
+        const data = await resp.json();
+        const status = document.getElementById('cookie-status');
+        status.textContent = data.msg || '已保存';
+        status.className = 'text-xs text-green-500 flex items-center ml-1';
+        setTimeout(() => { status.textContent = ''; status.className = 'text-xs text-gray-400 flex items-center ml-1'; }, 3000);
+      } catch {
+        document.getElementById('cookie-status').textContent = '保存失败';
+      }
+    }
+
+    async function clearCookie() {
+      document.getElementById('cookie-input').value = '';
+      await fetch('/set-cookie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: '' }),
+      });
+      const status = document.getElementById('cookie-status');
+      status.textContent = 'Cookie 已清除';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
+
+    // ── 字符计数 ──────────────────────────────────────────
     document.getElementById('text-input').addEventListener('input', function () {
-      const len = this.value.length;
-      document.getElementById('char-count').textContent = `${len} / 5000`;
+      document.getElementById('char-count').textContent = `${this.value.length} / 5000`;
     });
 
+    // ── 链接解析 + 检测 ───────────────────────────────────
+    async function fetchUrl() {
+      const url    = document.getElementById('url-input').value.trim();
+      const cookie = document.getElementById('cookie-input').value.trim();
+      if (!url) { alert('请输入小红书笔记链接'); return; }
+
+      setLoading(true, 'fetch');
+      try {
+        const resp = await fetch('/fetch-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, cookie }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { showError(data.error || '获取失败，请检查链接或 Cookie'); return; }
+
+        // 展示笔记标题信息
+        const noteInfo = document.getElementById('fetch-note-info');
+        noteInfo.style.display = '';
+        noteInfo.textContent = data.title ? `📝 已获取：${data.title}` : '📝 已获取笔记内容';
+
+        // 填入文案输入框并切到文案 Tab
+        document.getElementById('text-input').value = data.text || '';
+        document.getElementById('char-count').textContent = `${(data.text||'').length} / 5000`;
+        // 直接分析
+        await analyzeText();
+      } catch (e) {
+        showError('网络错误，请检查服务是否正常');
+      } finally {
+        setLoading(false, 'fetch');
+      }
+    }
+
+    // ── 文案检测 ──────────────────────────────────────────
     async function analyzeText() {
       const text = document.getElementById('text-input').value.trim();
-      if (!text) {
-        alert('请先输入要检测的文案');
-        return;
-      }
+      if (!text) { alert('请先输入要检测的文案'); return; }
 
       originalText = text;
-      currentText = text;
+      currentText  = text;
       appliedReplacements = {};
 
-      setLoading(true);
-
+      setLoading(true, 'analyze');
       try {
         const resp = await fetch('/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text }),
         });
-
         const data = await resp.json();
+        if (!resp.ok) { showError(data.error || '请求失败，请重试'); return; }
 
-        if (!resp.ok) {
-          showError(data.error || '请求失败，请重试');
-          return;
-        }
-
-        sensitiveWords = data.sensitive_words || [];
+        bannedWords   = data.banned_words   || [];
+        throttleWords = data.throttle_words || [];
+        allWords      = data.sensitive_words || [...bannedWords, ...throttleWords];
         renderResults(data);
       } catch (e) {
         showError('网络错误，请检查服务是否正常运行');
       } finally {
-        setLoading(false);
+        setLoading(false, 'analyze');
       }
     }
 
+    // ── 渲染结果 ──────────────────────────────────────────
     function renderResults(data) {
       hide('empty-panel');
       hide('error-panel');
       show('result-panel');
 
-      // 风险等级
       const risk = data.risk_level || 'low';
       const riskMap = {
-        high: { label: '高风险', cls: 'risk-badge-high', icon: '🚨' },
+        high:   { label: '高风险', cls: 'risk-badge-high',   icon: '🚨' },
         medium: { label: '中风险', cls: 'risk-badge-medium', icon: '⚠️' },
-        low: { label: '低风险', cls: 'risk-badge-low', icon: '✅' },
+        low:    { label: '低风险', cls: 'risk-badge-low',    icon: '✅' },
       };
       const riskInfo = riskMap[risk] || riskMap.low;
 
-      // 更新 badge
+      // 风险 badge
       const badge = document.getElementById('risk-badge');
       badge.textContent = riskInfo.label;
       badge.className = `text-xs font-medium px-2.5 py-1 rounded-full ${riskInfo.cls}`;
 
       document.getElementById('result-icon').textContent = riskInfo.icon;
       document.getElementById('summary-text').textContent = data.summary || '';
-      document.getElementById('word-count-badge').textContent =
-        sensitiveWords.length > 0 ? `发现 ${sensitiveWords.length} 个敏感词` : '暂无敏感词';
 
-      // 显示/隐藏操作按钮
-      if (sensitiveWords.length > 0) {
-        show('action-buttons');
-      } else {
-        hide('action-buttons');
-      }
+      // 数量 badge
+      const bannedBadge   = document.getElementById('banned-count-badge');
+      const throttleBadge = document.getElementById('throttle-count-badge');
+      bannedBadge.textContent   = `🚫 违禁词 ${bannedWords.length} 个`;
+      throttleBadge.textContent = `⚠️ 限流词 ${throttleWords.length} 个`;
+      bannedBadge.style.display   = '';
+      throttleBadge.style.display = '';
 
-      // 渲染敏感词卡片
-      renderWordCards();
+      // 操作按钮
+      if (allWords.length > 0) show('action-buttons');
+      else hide('action-buttons');
 
-      // 渲染高亮预览
+      // 渲染词卡片
+      renderWordCards('banned-word-list', bannedWords, 'banned');
+      renderWordCards('throttle-word-list', throttleWords, 'throttle');
+
+      // 显示/隐藏各区块
+      document.getElementById('banned-section').style.display   = '';
+      document.getElementById('throttle-section').style.display = '';
+
+      // 高亮预览
       renderHighlight(currentText);
       show('preview-section');
-
-      // 设置风险 badge 到预览区
-      const previewBadge = document.getElementById('risk-badge');
-      previewBadge.className = `text-xs font-medium px-2.5 py-1 rounded-full ${riskInfo.cls}`;
     }
 
-    function renderWordCards() {
-      const list = document.getElementById('word-list');
+    function renderWordCards(listId, words, category) {
+      const list = document.getElementById(listId);
       list.innerHTML = '';
 
-      if (sensitiveWords.length === 0) {
-        list.innerHTML = `<div class="text-center text-gray-400 text-sm py-4">🎉 未发现敏感词，文案基本合规！</div>`;
+      if (words.length === 0) {
+        const color = category === 'banned' ? 'text-red-300' : 'text-orange-300';
+        list.innerHTML = `<div class="text-center ${color} text-xs py-2">🎉 未发现${category === 'banned' ? '违禁词' : '限流词'}</div>`;
         return;
       }
 
-      sensitiveWords.forEach((item, idx) => {
-        const applied = appliedReplacements[item.word];
-        const card = document.createElement('div');
-        card.className = 'word-card bg-white rounded-xl border border-gray-200 shadow-sm p-4 transition-all';
-        card.id = `card-${idx}`;
+      const accentBg  = category === 'banned' ? 'bg-red-100 text-red-600'     : 'bg-orange-100 text-orange-600';
+      const hoverBtn  = category === 'banned'
+        ? 'hover:bg-red-50 hover:border-red-300 hover:text-red-600'
+        : 'hover:bg-orange-50 hover:border-orange-300 hover:text-orange-600';
+      const activeBtn = category === 'banned'
+        ? 'bg-green-100 border-green-400 text-green-700 font-medium'
+        : 'bg-green-100 border-green-400 text-green-700 font-medium';
 
-        const suggestionsHtml = (item.suggestions || []).map((s, si) => `
+      words.forEach((item, idx) => {
+        const globalIdx = category === 'banned'
+          ? allWords.findIndex(w => w.word === item.word && w.category === 'banned')
+          : allWords.findIndex(w => w.word === item.word && w.category === 'throttle');
+        const cardId = `card-${category}-${idx}`;
+        const applied = appliedReplacements[`${category}::${item.word}`];
+
+        const suggestionsHtml = (item.suggestions || []).map(s => `
           <button
             class="suggestion-btn text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              applied === s
-                ? 'bg-green-100 border-green-400 text-green-700 font-medium'
-                : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-red-50 hover:border-red-300 hover:text-red-600'
+              applied === s ? activeBtn : `bg-gray-50 border-gray-200 text-gray-600 ${hoverBtn}`
             }"
-            onclick="applyReplacement(${idx}, '${escapeStr(item.word)}', '${escapeStr(s)}')"
+            onclick="applyReplacement('${escapeStr(category)}', '${escapeStr(item.word)}', '${escapeStr(s)}')"
           >${s}</button>
         `).join('');
 
+        const card = document.createElement('div');
+        card.className = 'word-card bg-white rounded-xl border border-gray-200 shadow-sm p-4 transition-all';
+        card.id = cardId;
         card.innerHTML = `
           <div class="flex items-start justify-between gap-2 mb-2">
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="bg-red-100 text-red-600 font-medium text-sm px-2.5 py-0.5 rounded">${escapeHtml(item.word)}</span>
+              <span class="font-medium text-sm px-2.5 py-0.5 rounded ${accentBg}">${escapeHtml(item.word)}</span>
               ${applied ? `<span class="text-xs text-green-600">→ <strong>${escapeHtml(applied)}</strong></span>` : ''}
             </div>
+            <span class="text-xs text-gray-300 whitespace-nowrap">${item.source === 'dict' ? '📖 词库' : '🤖 AI'}</span>
           </div>
-          <p class="text-xs text-gray-500 mb-3">⚠️ ${escapeHtml(item.reason || '')}</p>
-          <div class="flex flex-wrap gap-2">
-            ${suggestionsHtml}
-          </div>
+          <p class="text-xs text-gray-500 mb-3">${category === 'banned' ? '🚫' : '⚠️'} ${escapeHtml(item.reason || '')}</p>
+          <div class="flex flex-wrap gap-2">${suggestionsHtml}</div>
         `;
-
         list.appendChild(card);
       });
     }
 
-    function applyReplacement(idx, word, suggestion) {
-      appliedReplacements[word] = suggestion;
-
-      // 重新构建当前文本
-      let text = originalText;
-      // 按 position 排序，从后往前替换避免索引偏移
-      const toReplace = sensitiveWords
-        .filter(w => appliedReplacements[w.word])
-        .sort((a, b) => b.position[0] - a.position[0]);
-
-      for (const item of toReplace) {
-        const rep = appliedReplacements[item.word];
-        // 找到当前文本中该词的位置（可能已经被替换过）
-        const pos = text.indexOf(item.word);
-        if (pos !== -1) {
-          text = text.slice(0, pos) + rep + text.slice(pos + item.word.length);
-        }
-      }
-      currentText = text;
-
-      // 重新渲染卡片和预览
-      renderWordCards();
-      renderHighlight(originalText); // 高亮始终基于原文
+    // ── 替换逻辑 ──────────────────────────────────────────
+    function applyReplacement(category, word, suggestion) {
+      appliedReplacements[`${category}::${word}`] = suggestion;
+      rebuildCurrentText();
+      renderWordCards('banned-word-list', bannedWords, 'banned');
+      renderWordCards('throttle-word-list', throttleWords, 'throttle');
+      renderHighlight(originalText);
       renderModified(currentText);
     }
 
     function applyAllSuggestions() {
-      sensitiveWords.forEach(item => {
-        if (item.suggestions && item.suggestions.length > 0 && !appliedReplacements[item.word]) {
-          appliedReplacements[item.word] = item.suggestions[0];
+      [...bannedWords, ...throttleWords].forEach(item => {
+        const key = `${item.category}::${item.word}`;
+        if (item.suggestions && item.suggestions.length > 0 && !appliedReplacements[key]) {
+          appliedReplacements[key] = item.suggestions[0];
         }
       });
+      rebuildCurrentText();
+      renderWordCards('banned-word-list', bannedWords, 'banned');
+      renderWordCards('throttle-word-list', throttleWords, 'throttle');
+      renderHighlight(originalText);
+      renderModified(currentText);
+    }
 
+    function rebuildCurrentText() {
       let text = originalText;
-      const toReplace = sensitiveWords
-        .filter(w => appliedReplacements[w.word])
+      // 按 position 从后往前替换（避免索引漂移）
+      const toReplace = allWords
+        .filter(w => appliedReplacements[`${w.category}::${w.word}`])
         .sort((a, b) => b.position[0] - a.position[0]);
 
       for (const item of toReplace) {
-        const rep = appliedReplacements[item.word];
-        const pos = text.indexOf(item.word);
-        if (pos !== -1) {
-          text = text.slice(0, pos) + rep + text.slice(pos + item.word.length);
+        const rep = appliedReplacements[`${item.category}::${item.word}`];
+        const [s, e] = item.position;
+        if (text.slice(s, e) === item.word) {
+          text = text.slice(0, s) + rep + text.slice(e);
+        } else {
+          const pos = text.indexOf(item.word);
+          if (pos !== -1) text = text.slice(0, pos) + rep + text.slice(pos + item.word.length);
         }
       }
       currentText = text;
-
-      renderWordCards();
-      renderHighlight(originalText);
-      renderModified(currentText);
     }
 
     function resetText() {
       appliedReplacements = {};
       currentText = originalText;
-      renderWordCards();
+      renderWordCards('banned-word-list', bannedWords, 'banned');
+      renderWordCards('throttle-word-list', throttleWords, 'throttle');
       renderHighlight(originalText);
       hide('modified-section');
     }
 
+    // ── 高亮预览 ──────────────────────────────────────────
     function renderHighlight(text) {
       const container = document.getElementById('preview-content');
-
-      if (sensitiveWords.length === 0) {
+      if (allWords.length === 0) {
         container.textContent = text;
         return;
       }
 
-      // 收集所有需要高亮的区间（基于原文查找）
+      // 构建区间列表（优先用 position，兜底搜索）
       const ranges = [];
-      sensitiveWords.forEach((item, idx) => {
-        let searchFrom = 0;
+      allWords.forEach(item => {
+        let from = 0;
         while (true) {
-          const pos = text.indexOf(item.word, searchFrom);
+          const pos = text.indexOf(item.word, from);
           if (pos === -1) break;
-          ranges.push({ start: pos, end: pos + item.word.length, word: item.word, idx });
-          searchFrom = pos + 1;
+          ranges.push({ start: pos, end: pos + item.word.length, word: item.word, category: item.category });
+          from = pos + 1;
         }
       });
-
-      // 按起始位置排序
       ranges.sort((a, b) => a.start - b.start);
 
-      // 构建 HTML
       let html = '';
       let cursor = 0;
       for (const r of ranges) {
-        if (r.start < cursor) continue; // 重叠跳过
+        if (r.start < cursor) continue;
         html += escapeHtml(text.slice(cursor, r.start));
-        html += `<span class="highlight-word" data-idx="${r.idx}" onclick="highlightCard(${r.idx})">${escapeHtml(r.word)}</span>`;
+        const cls = r.category === 'banned' ? 'highlight-banned' : 'highlight-throttle';
+        html += `<span class="${cls}" data-word="${escapeHtml(r.word)}" data-cat="${r.category}"
+          onclick="highlightCard('${escapeStr(r.category)}', '${escapeStr(r.word)}')">${escapeHtml(r.word)}</span>`;
         cursor = r.end;
       }
       html += escapeHtml(text.slice(cursor));
       container.innerHTML = html;
     }
 
-    function renderModified(text) {
-      if (Object.keys(appliedReplacements).length === 0) {
-        hide('modified-section');
-        return;
+    function highlightCard(category, word) {
+      document.querySelectorAll('.word-card').forEach(el => {
+        el.classList.remove('active-card-banned', 'active-card-throttle');
+      });
+      document.querySelectorAll('.highlight-banned, .highlight-throttle').forEach(el => el.classList.remove('active'));
+
+      // 找到对应卡片
+      const listId  = category === 'banned' ? 'banned-word-list' : 'throttle-word-list';
+      const words   = category === 'banned' ? bannedWords : throttleWords;
+      const idx     = words.findIndex(w => w.word === word);
+      const cardId  = `card-${category}-${idx}`;
+      const card    = document.getElementById(cardId);
+      if (card) {
+        card.classList.add(category === 'banned' ? 'active-card-banned' : 'active-card-throttle');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
+      // 激活高亮 span
+      document.querySelectorAll(`[data-word="${escapeHtml(word)}"][data-cat="${category}"]`)
+        .forEach(el => el.classList.add('active'));
+    }
+
+    function renderModified(text) {
+      if (Object.keys(appliedReplacements).length === 0) { hide('modified-section'); return; }
       document.getElementById('modified-content').textContent = text;
       show('modified-section');
     }
 
-    function highlightCard(idx) {
-      // 移除所有激活状态
-      document.querySelectorAll('.word-card').forEach(el => el.classList.remove('active-card'));
-      document.querySelectorAll('.highlight-word').forEach(el => el.classList.remove('active'));
-
-      // 激活对应卡片
-      const card = document.getElementById(`card-${idx}`);
-      if (card) {
-        card.classList.add('active-card');
-        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-      // 激活对应高亮词
-      document.querySelectorAll(`.highlight-word[data-idx="${idx}"]`).forEach(el => el.classList.add('active'));
-    }
-
+    // ── 复制 / 清空 ───────────────────────────────────────
     async function copyModified() {
       const text = document.getElementById('modified-content').textContent;
       try {
@@ -461,62 +613,55 @@
           btn.textContent = '复制';
           btn.classList.remove('text-green-500', 'border-green-200');
         }, 2000);
-      } catch {
-        alert('复制失败，请手动选择文本复制');
-      }
+      } catch { alert('复制失败，请手动选择文本复制'); }
     }
 
     function clearAll() {
       document.getElementById('text-input').value = '';
+      document.getElementById('url-input').value  = '';
       document.getElementById('char-count').textContent = '0 / 5000';
-      originalText = '';
-      currentText = '';
-      sensitiveWords = [];
+      document.getElementById('fetch-note-info').style.display = 'none';
+      originalText = ''; currentText = '';
+      bannedWords = []; throttleWords = []; allWords = [];
       appliedReplacements = {};
-      hide('preview-section');
-      hide('modified-section');
-      hide('result-panel');
-      hide('error-panel');
+      hide('preview-section'); hide('modified-section');
+      hide('result-panel'); hide('error-panel');
       show('empty-panel');
     }
 
+    // ── 状态辅助 ──────────────────────────────────────────
     function showError(msg) {
-      hide('empty-panel');
-      hide('result-panel');
+      hide('empty-panel'); hide('result-panel');
       show('error-panel');
       document.getElementById('error-msg').textContent = msg;
     }
 
-    function setLoading(on) {
-      const btn = document.getElementById('analyze-btn');
+    function setLoading(on, source) {
+      const analyzeBtn = document.getElementById('analyze-btn');
+      const fetchBtn   = document.getElementById('fetch-btn');
       const loadingPanel = document.getElementById('loading-panel');
       if (on) {
-        btn.disabled = true;
-        btn.textContent = '检测中…';
-        hide('empty-panel');
-        hide('result-panel');
-        hide('error-panel');
+        if (analyzeBtn) { analyzeBtn.disabled = true; analyzeBtn.textContent = '检测中…'; }
+        if (fetchBtn)   { fetchBtn.disabled = true; fetchBtn.textContent = '获取中…'; }
+        hide('empty-panel'); hide('result-panel'); hide('error-panel');
         show('loading-panel');
       } else {
-        btn.disabled = false;
-        btn.textContent = '开始检测';
+        if (analyzeBtn) { analyzeBtn.disabled = false; analyzeBtn.textContent = '开始检测'; }
+        if (fetchBtn)   { fetchBtn.disabled = false; fetchBtn.textContent = '获取内容并检测'; }
         hide('loading-panel');
       }
     }
 
-    function show(id) { document.getElementById(id).style.display = ''; }
-    function hide(id) { document.getElementById(id).style.display = 'none'; }
+    function show(id) { const el = document.getElementById(id); if (el) el.style.display = ''; }
+    function hide(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
 
     function escapeHtml(str) {
       return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-
     function escapeStr(str) {
-      return String(str).replace(/'/g, "\\'").replace(/\\/g, '\\\\');
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     }
   </script>
 </body>
