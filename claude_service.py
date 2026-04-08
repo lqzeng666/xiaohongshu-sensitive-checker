@@ -39,18 +39,18 @@ AI_SYSTEM_PROMPT = """你是一位专业的小红书内容合规顾问。
 
 ## 输出格式（严格 JSON，不含任何其他文字）
 
-{
+{{
   "sensitive_words": [
-    {
+    {{
       "word": "敏感词原文（与输入文本完全一致的子串）",
       "position": [起始字符索引, 结束字符索引],
       "reason": "敏感原因（20字以内）",
       "suggestions": ["替换方案1", "替换方案2"]
-    }
+    }}
   ],
   "risk_level": "high 或 medium 或 low",
   "summary": "整体风险评估（80字以内）"
-}
+}}
 
 如无额外发现，sensitive_words 返回空数组。风险等级综合词库命中数量和AI发现结果共同判断。"""
 
