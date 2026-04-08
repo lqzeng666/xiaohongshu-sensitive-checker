@@ -1,0 +1,23 @@
+# Environment / secrets
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude internal
+.claude/
+
+# OS
+.DS_Store

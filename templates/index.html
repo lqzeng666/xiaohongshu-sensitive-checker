@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小红书敏感词检测工具</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .highlight-word {
+      background-color: #fee2e2;
+      border-bottom: 2px solid #ef4444;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: background-color 0.15s;
+      position: relative;
+    }
+    .highlight-word:hover {
+      background-color: #fecaca;
+    }
+    .highlight-word.active {
+      background-color: #fca5a5;
+    }
+    #preview-content {
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+    .risk-high { color: #dc2626; }
+    .risk-medium { color: #d97706; }
+    .risk-low { color: #16a34a; }
+    .risk-badge-high { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
+    .risk-badge-medium { background: #fef3c7; color: #d97706; border: 1px solid #fcd34d; }
+    .risk-badge-low { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
+    .word-card.active-card {
+      border-color: #f87171;
+      background: #fff5f5;
+    }
+    .loading-dots::after {
+      content: '';
+      animation: dots 1.2s steps(4, end) infinite;
+    }
+    @keyframes dots {
+      0%, 20% { content: ''; }
+      40% { content: '.'; }
+      60% { content: '..'; }
+      80%, 100% { content: '...'; }
+    }
+    #text-input {
+      resize: vertical;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center gap-3">
+      <div class="w-8 h-8 bg-red-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">书</div>
+      <h1 class="text-xl font-semibold text-gray-800">小红书敏感词检测工具</h1>
+      <span class="text-xs text-gray-400 ml-2">by Claude AI</span>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- 左栏：输入 + 预览 -->
+      <div class="flex flex-col gap-4">
+
+        <!-- 输入区 -->
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-700">原始文案</h2>
+            <span id="char-count" class="text-xs text-gray-400">0 / 5000</span>
+          </div>
+          <textarea
+            id="text-input"
+            class="w-full h-52 p-3 text-sm text-gray-700 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400 placeholder-gray-300"
+            placeholder="粘贴你的小红书文案草稿，点击「开始检测」识别敏感词…"
+            maxlength="5000"
+          ></textarea>
+          <div class="flex items-center gap-3 mt-3">
+            <button
+              id="analyze-btn"
+              class="flex-1 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-medium py-2.5 px-6 rounded-lg transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              onclick="analyzeText()"
+            >
+              开始检测
+            </button>
+            <button
+              class="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+              onclick="clearAll()"
+            >
+              清空
+            </button>
+          </div>
+        </div>
+
+        <!-- 高亮预览区 -->
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5" id="preview-section" style="display:none">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-700">原文标注</h2>
+            <div id="risk-badge" class="text-xs font-medium px-2.5 py-1 rounded-full"></div>
+          </div>
+          <div id="preview-content" class="text-gray-700 bg-gray-50 rounded-lg p-3 min-h-[80px]"></div>
+        </div>
+
+        <!-- 修改后预览 -->
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5" id="modified-section" style="display:none">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-700">修改后文案</h2>
+            <button
+              id="copy-btn"
+              class="text-xs text-red-500 hover:text-red-600 border border-red-200 rounded px-3 py-1 transition-colors"
+              onclick="copyModified()"
+            >复制</button>
+          </div>
+          <div id="modified-content" class="text-gray-700 bg-green-50 rounded-lg p-3 min-h-[80px] whitespace-pre-wrap text-sm leading-relaxed"></div>
+        </div>
+
+      </div>
+
+      <!-- 右栏：分析结果 -->
+      <div class="flex flex-col gap-4">
+
+        <!-- 加载状态 -->
+        <div id="loading-panel" class="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-center" style="display:none">
+          <div class="flex flex-col items-center gap-3">
+            <svg class="animate-spin w-8 h-8 text-red-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-gray-500 text-sm loading-dots">AI 正在分析</p>
+            <p class="text-gray-400 text-xs">Claude 正在深度理解文案语境，通常需要 10-30 秒</p>
+          </div>
+        </div>
+
+        <!-- 空状态 -->
+        <div id="empty-panel" class="bg-white rounded-xl border border-dashed border-gray-200 p-8 text-center">
+          <div class="text-4xl mb-3">🔍</div>
+          <p class="text-gray-400 text-sm">粘贴文案后点击「开始检测」</p>
+          <p class="text-gray-300 text-xs mt-1">支持检测广告词、医疗宣称、引流词等敏感内容</p>
+        </div>
+
+        <!-- 结果面板 -->
+        <div id="result-panel" style="display:none" class="flex flex-col gap-4">
+
+          <!-- 总结 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <div class="flex items-start gap-3">
+              <div id="result-icon" class="text-2xl mt-0.5"></div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-semibold text-gray-700">检测结果</span>
+                  <span id="word-count-badge" class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full"></span>
+                </div>
+                <p id="summary-text" class="text-sm text-gray-600 leading-relaxed"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div id="action-buttons" class="flex gap-2" style="display:none">
+            <button
+              class="flex-1 bg-orange-50 hover:bg-orange-100 text-orange-600 border border-orange-200 font-medium py-2 px-4 rounded-lg text-sm transition-colors"
+              onclick="applyAllSuggestions()"
+            >
+              ✨ 一键替换全部
+            </button>
+            <button
+              class="flex-1 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 font-medium py-2 px-4 rounded-lg text-sm transition-colors"
+              onclick="resetText()"
+            >
+              ↩ 还原原文
+            </button>
+          </div>
+
+          <!-- 敏感词列表 -->
+          <div id="word-list" class="flex flex-col gap-3"></div>
+
+        </div>
+
+        <!-- 错误面板 -->
+        <div id="error-panel" class="bg-red-50 rounded-xl border border-red-200 p-5" style="display:none">
+          <div class="flex items-start gap-2">
+            <span class="text-red-500 text-lg">⚠️</span>
+            <div>
+              <p class="font-medium text-red-700 text-sm">检测失败</p>
+              <p id="error-msg" class="text-red-600 text-sm mt-1"></p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let originalText = '';
+    let currentText = '';
+    let sensitiveWords = [];
+    let appliedReplacements = {}; // word -> chosen suggestion
+
+    // 字符计数
+    document.getElementById('text-input').addEventListener('input', function () {
+      const len = this.value.length;
+      document.getElementById('char-count').textContent = `${len} / 5000`;
+    });
+
+    async function analyzeText() {
+      const text = document.getElementById('text-input').value.trim();
+      if (!text) {
+        alert('请先输入要检测的文案');
+        return;
+      }
+
+      originalText = text;
+      currentText = text;
+      appliedReplacements = {};
+
+      setLoading(true);
+
+      try {
+        const resp = await fetch('/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          showError(data.error || '请求失败，请重试');
+          return;
+        }
+
+        sensitiveWords = data.sensitive_words || [];
+        renderResults(data);
+      } catch (e) {
+        showError('网络错误，请检查服务是否正常运行');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function renderResults(data) {
+      hide('empty-panel');
+      hide('error-panel');
+      show('result-panel');
+
+      // 风险等级
+      const risk = data.risk_level || 'low';
+      const riskMap = {
+        high: { label: '高风险', cls: 'risk-badge-high', icon: '🚨' },
+        medium: { label: '中风险', cls: 'risk-badge-medium', icon: '⚠️' },
+        low: { label: '低风险', cls: 'risk-badge-low', icon: '✅' },
+      };
+      const riskInfo = riskMap[risk] || riskMap.low;
+
+      // 更新 badge
+      const badge = document.getElementById('risk-badge');
+      badge.textContent = riskInfo.label;
+      badge.className = `text-xs font-medium px-2.5 py-1 rounded-full ${riskInfo.cls}`;
+
+      document.getElementById('result-icon').textContent = riskInfo.icon;
+      document.getElementById('summary-text').textContent = data.summary || '';
+      document.getElementById('word-count-badge').textContent =
+        sensitiveWords.length > 0 ? `发现 ${sensitiveWords.length} 个敏感词` : '暂无敏感词';
+
+      // 显示/隐藏操作按钮
+      if (sensitiveWords.length > 0) {
+        show('action-buttons');
+      } else {
+        hide('action-buttons');
+      }
+
+      // 渲染敏感词卡片
+      renderWordCards();
+
+      // 渲染高亮预览
+      renderHighlight(currentText);
+      show('preview-section');
+
+      // 设置风险 badge 到预览区
+      const previewBadge = document.getElementById('risk-badge');
+      previewBadge.className = `text-xs font-medium px-2.5 py-1 rounded-full ${riskInfo.cls}`;
+    }
+
+    function renderWordCards() {
+      const list = document.getElementById('word-list');
+      list.innerHTML = '';
+
+      if (sensitiveWords.length === 0) {
+        list.innerHTML = `<div class="text-center text-gray-400 text-sm py-4">🎉 未发现敏感词，文案基本合规！</div>`;
+        return;
+      }
+
+      sensitiveWords.forEach((item, idx) => {
+        const applied = appliedReplacements[item.word];
+        const card = document.createElement('div');
+        card.className = 'word-card bg-white rounded-xl border border-gray-200 shadow-sm p-4 transition-all';
+        card.id = `card-${idx}`;
+
+        const suggestionsHtml = (item.suggestions || []).map((s, si) => `
+          <button
+            class="suggestion-btn text-xs px-3 py-1.5 rounded-full border transition-colors ${
+              applied === s
+                ? 'bg-green-100 border-green-400 text-green-700 font-medium'
+                : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-red-50 hover:border-red-300 hover:text-red-600'
+            }"
+            onclick="applyReplacement(${idx}, '${escapeStr(item.word)}', '${escapeStr(s)}')"
+          >${s}</button>
+        `).join('');
+
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="bg-red-100 text-red-600 font-medium text-sm px-2.5 py-0.5 rounded">${escapeHtml(item.word)}</span>
+              ${applied ? `<span class="text-xs text-green-600">→ <strong>${escapeHtml(applied)}</strong></span>` : ''}
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 mb-3">⚠️ ${escapeHtml(item.reason || '')}</p>
+          <div class="flex flex-wrap gap-2">
+            ${suggestionsHtml}
+          </div>
+        `;
+
+        list.appendChild(card);
+      });
+    }
+
+    function applyReplacement(idx, word, suggestion) {
+      appliedReplacements[word] = suggestion;
+
+      // 重新构建当前文本
+      let text = originalText;
+      // 按 position 排序，从后往前替换避免索引偏移
+      const toReplace = sensitiveWords
+        .filter(w => appliedReplacements[w.word])
+        .sort((a, b) => b.position[0] - a.position[0]);
+
+      for (const item of toReplace) {
+        const rep = appliedReplacements[item.word];
+        // 找到当前文本中该词的位置（可能已经被替换过）
+        const pos = text.indexOf(item.word);
+        if (pos !== -1) {
+          text = text.slice(0, pos) + rep + text.slice(pos + item.word.length);
+        }
+      }
+      currentText = text;
+
+      // 重新渲染卡片和预览
+      renderWordCards();
+      renderHighlight(originalText); // 高亮始终基于原文
+      renderModified(currentText);
+    }
+
+    function applyAllSuggestions() {
+      sensitiveWords.forEach(item => {
+        if (item.suggestions && item.suggestions.length > 0 && !appliedReplacements[item.word]) {
+          appliedReplacements[item.word] = item.suggestions[0];
+        }
+      });
+
+      let text = originalText;
+      const toReplace = sensitiveWords
+        .filter(w => appliedReplacements[w.word])
+        .sort((a, b) => b.position[0] - a.position[0]);
+
+      for (const item of toReplace) {
+        const rep = appliedReplacements[item.word];
+        const pos = text.indexOf(item.word);
+        if (pos !== -1) {
+          text = text.slice(0, pos) + rep + text.slice(pos + item.word.length);
+        }
+      }
+      currentText = text;
+
+      renderWordCards();
+      renderHighlight(originalText);
+      renderModified(currentText);
+    }
+
+    function resetText() {
+      appliedReplacements = {};
+      currentText = originalText;
+      renderWordCards();
+      renderHighlight(originalText);
+      hide('modified-section');
+    }
+
+    function renderHighlight(text) {
+      const container = document.getElementById('preview-content');
+
+      if (sensitiveWords.length === 0) {
+        container.textContent = text;
+        return;
+      }
+
+      // 收集所有需要高亮的区间（基于原文查找）
+      const ranges = [];
+      sensitiveWords.forEach((item, idx) => {
+        let searchFrom = 0;
+        while (true) {
+          const pos = text.indexOf(item.word, searchFrom);
+          if (pos === -1) break;
+          ranges.push({ start: pos, end: pos + item.word.length, word: item.word, idx });
+          searchFrom = pos + 1;
+        }
+      });
+
+      // 按起始位置排序
+      ranges.sort((a, b) => a.start - b.start);
+
+      // 构建 HTML
+      let html = '';
+      let cursor = 0;
+      for (const r of ranges) {
+        if (r.start < cursor) continue; // 重叠跳过
+        html += escapeHtml(text.slice(cursor, r.start));
+        html += `<span class="highlight-word" data-idx="${r.idx}" onclick="highlightCard(${r.idx})">${escapeHtml(r.word)}</span>`;
+        cursor = r.end;
+      }
+      html += escapeHtml(text.slice(cursor));
+      container.innerHTML = html;
+    }
+
+    function renderModified(text) {
+      if (Object.keys(appliedReplacements).length === 0) {
+        hide('modified-section');
+        return;
+      }
+      document.getElementById('modified-content').textContent = text;
+      show('modified-section');
+    }
+
+    function highlightCard(idx) {
+      // 移除所有激活状态
+      document.querySelectorAll('.word-card').forEach(el => el.classList.remove('active-card'));
+      document.querySelectorAll('.highlight-word').forEach(el => el.classList.remove('active'));
+
+      // 激活对应卡片
+      const card = document.getElementById(`card-${idx}`);
+      if (card) {
+        card.classList.add('active-card');
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      // 激活对应高亮词
+      document.querySelectorAll(`.highlight-word[data-idx="${idx}"]`).forEach(el => el.classList.add('active'));
+    }
+
+    async function copyModified() {
+      const text = document.getElementById('modified-content').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = '✓ 已复制';
+        btn.classList.add('text-green-500', 'border-green-200');
+        setTimeout(() => {
+          btn.textContent = '复制';
+          btn.classList.remove('text-green-500', 'border-green-200');
+        }, 2000);
+      } catch {
+        alert('复制失败，请手动选择文本复制');
+      }
+    }
+
+    function clearAll() {
+      document.getElementById('text-input').value = '';
+      document.getElementById('char-count').textContent = '0 / 5000';
+      originalText = '';
+      currentText = '';
+      sensitiveWords = [];
+      appliedReplacements = {};
+      hide('preview-section');
+      hide('modified-section');
+      hide('result-panel');
+      hide('error-panel');
+      show('empty-panel');
+    }
+
+    function showError(msg) {
+      hide('empty-panel');
+      hide('result-panel');
+      show('error-panel');
+      document.getElementById('error-msg').textContent = msg;
+    }
+
+    function setLoading(on) {
+      const btn = document.getElementById('analyze-btn');
+      const loadingPanel = document.getElementById('loading-panel');
+      if (on) {
+        btn.disabled = true;
+        btn.textContent = '检测中…';
+        hide('empty-panel');
+        hide('result-panel');
+        hide('error-panel');
+        show('loading-panel');
+      } else {
+        btn.disabled = false;
+        btn.textContent = '开始检测';
+        hide('loading-panel');
+      }
+    }
+
+    function show(id) { document.getElementById(id).style.display = ''; }
+    function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function escapeStr(str) {
+      return String(str).replace(/'/g, "\\'").replace(/\\/g, '\\\\');
+    }
+  </script>
+</body>
+</html>
