@@ -56,10 +56,30 @@ AI_SYSTEM_PROMPT = """你是一位专业的小红书内容合规顾问。
 
 
 # ── 第一层：词库精确匹配 ──────────────────────────────────
+def _is_ascii_word(s: str) -> bool:
+    """判断字符串是否全由 ASCII 字母或数字组成（需要词边界检测）。"""
+    return bool(s) and all(c.isascii() and (c.isalpha() or c.isdigit()) for c in s)
+
+
+def _has_word_boundary(text: str, idx: int, word: str) -> bool:
+    """
+    对纯 ASCII 字母/数字词，检查命中位置前后是否为词边界
+    （非 ASCII 字母数字字符，或字符串首尾），避免 'q' 匹配到 'sequential' 内部。
+    中文词/混合词不做边界检查，直接返回 True。
+    """
+    if not _is_ascii_word(word):
+        return True
+    end = idx + len(word)
+    before_ok = (idx == 0) or not (text[idx - 1].isascii() and (text[idx - 1].isalpha() or text[idx - 1].isdigit()))
+    after_ok  = (end == len(text)) or not (text[end].isascii() and (text[end].isalpha() or text[end].isdigit()))
+    return before_ok and after_ok
+
+
 def _dict_match(text: str) -> list[dict]:
     """
     遍历词库，找出所有命中词及其位置。
     使用贪婪策略：已被标记的字符区间不会被重复命中。
+    纯 ASCII 词（如 'q'、'QQ'、'SM'）额外检查词边界，避免误匹配长英文单词内部。
     """
     hits = []
     occupied = set()  # 已命中的字符索引集合，避免重叠
@@ -70,16 +90,17 @@ def _dict_match(text: str) -> list[dict]:
             idx = text.find(word, search_from)
             if idx == -1:
                 break
-            span = set(range(idx, idx + len(word)))
-            if not span & occupied:  # 无重叠才记录
-                occupied |= span
-                hits.append({
-                    "word": word,
-                    "position": [idx, idx + len(word)],
-                    "reason": "词库收录敏感词",
-                    "suggestions": WORD_LIBRARY[word],
-                    "source": "dict"
-                })
+            if _has_word_boundary(text, idx, word):
+                span = set(range(idx, idx + len(word)))
+                if not span & occupied:  # 无重叠才记录
+                    occupied |= span
+                    hits.append({
+                        "word": word,
+                        "position": [idx, idx + len(word)],
+                        "reason": "词库收录敏感词",
+                        "suggestions": WORD_LIBRARY[word],
+                        "source": "dict"
+                    })
             search_from = idx + 1
 
     # 按出现位置排序
